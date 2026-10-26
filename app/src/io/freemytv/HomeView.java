@@ -16,6 +16,10 @@ import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Shader;
 import android.media.tv.TvInputManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -241,6 +245,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private String clockText = "", dateText = "", weatherLine = "";
     /** "Off in 42 min" next to the round buttons while the sleep timer runs (Settings > Sleep Timer); "" otherwise. */
     private String sleepText = "";
+    /** The network's symbol beside the top buttons: Ethernet, Wi-Fi bars, no internet, or none at all. */
+    private String netSymbol;
+    private final ConnectivityManager.NetworkCallback netCallback = new ConnectivityManager.NetworkCallback() {
+        @Override public void onCapabilitiesChanged(Network n, NetworkCapabilities caps) { setNet(netSymbol(caps)); }
+        @Override public void onLost(Network n) { setNet("wifi_off"); }
+    };
     private long weatherLineAt = -1;
     private int weatherLinePrefs = -1;
     private String weatherLineLanguage = "";
@@ -282,6 +292,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private boolean clock24;
     private String textLanguage;
     private String weatherTitle, nowTemp, highLow, sunriseText, sunsetText, staleText;
+    private String precipText = "", airText = "";   // under the temperature in place of the condition; after the sunset
+    private long precipMinute = -1;
+    private HomeData.Weather precipWeather;
     private final String[] hourText = new String[6], hourTempText = new String[6];
     private final String[] dayText = new String[5], dayMaxText = new String[5], dayMinText = new String[5];
     private boolean textDays;   // the weather card shows the next days (Home Settings → Forecast) and has them
@@ -446,10 +459,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         recs.refreshIfStale();
         Photos.importInbox(getContext(), ownReady);   // photos a computer just sent
         if (tvInputs != null) tvInputs.registerCallback(inputCallback, handler);
+        watchNetwork(true);
         handler.postDelayed(tick, 15_000);
         playing.start();
         checkNotices();
-        if (!again) reload();
+        if (!again) {
+            reload();
+            checkEpisodes();
+        }
         updatePalette();
         updatePicks();
         updateSleep();      // a timer just set in Settings shows at once, not at the next tick
@@ -482,6 +499,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         data.removeListener(this);
         recs.removeListener(this);
         if (tvInputs != null) tvInputs.unregisterCallback(inputCallback);
+        watchNetwork(false);
+    }
+
+    /** Followed shows (Episodes): a toast for each new episode, once. */
+    private void checkEpisodes() {
+        final Context c = getContext().getApplicationContext();
+        LOADER.execute(() -> {
+            List<String> news = Episodes.check(c);
+            if (!news.isEmpty()) handler.post(() -> { for (String s : news) showToast(s); });
+        });
     }
 
     void destroy() {
@@ -795,6 +822,37 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (text.equals(sleepText)) return;
         sleepText = text;
         statusDirty = true;
+    }
+
+    private static String netSymbol(NetworkCapabilities caps) {
+        if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) return "wifi_bad";
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) return "ethernet";
+        if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return null;
+        int rssi = Build.VERSION.SDK_INT >= 29 ? caps.getSignalStrength() : Integer.MIN_VALUE;
+        if (rssi == Integer.MIN_VALUE) return "wifi_4";   // unknown (Android 8 and 9)
+        return rssi >= -55 ? "wifi_4" : rssi >= -66 ? "wifi_3" : rssi >= -77 ? "wifi_2" : "wifi_1";
+    }
+
+    private void setNet(String symbol) {
+        if (TextUtils.equals(symbol, netSymbol)) return;
+        netSymbol = symbol;
+        statusDirty = true;
+        status.invalidate();
+    }
+
+    private void watchNetwork(boolean on) {
+        ConnectivityManager cm = getContext().getSystemService(ConnectivityManager.class);
+        if (cm == null) return;
+        try {
+            if (on) {
+                if (cm.getActiveNetwork() == null) setNet("wifi_off");
+                cm.registerDefaultNetworkCallback(netCallback, handler);
+            } else {
+                cm.unregisterNetworkCallback(netCallback);
+            }
+        } catch (RuntimeException e) {   // registered twice, or not at all
+            AppLog.w("network status: " + e.getMessage());
+        }
     }
 
     private boolean updateClock() {
@@ -1727,7 +1785,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float sw = Symbols.width(getContext(), symbol, 52 * k);
         Symbols.draw(getContext(), c, symbol, x + sw / 2, r.top + 132 * k, 52 * k, drawerInk(0.95f));
         c.drawText(nowTemp, x + sw + 18 * k - Ui.leftBearing(bigTemp, nowTemp), r.top + 170 * k, bigTemp);
-        c.drawText(HomeData.condition(wx.code, wx.isDay), x, r.top + 220 * k, cardText);
+        c.drawText(precipText.isEmpty() ? HomeData.condition(wx.code, wx.isDay) : precipText, x, r.top + 220 * k, cardText);
         c.drawText(highLow, x, r.top + 258 * k, cardDim);
         float split = r.left + 392 * k;
         fill.setShader(null);
@@ -1757,7 +1815,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         float sx = hx, base = r.top + 258 * k;
         if (wx.sunrise != 0) sx = sunItem(c, "sunrise", sunriseText, sx, base) + 36 * k;
-        if (wx.sunset != 0) sunItem(c, "sunset", sunsetText, sx, base);
+        if (wx.sunset != 0) sx = sunItem(c, "sunset", sunsetText, sx, base) + 36 * k;
+        if (!airText.isEmpty() && sx + cardDim.measureText(airText) <= r.right - 30 * k) c.drawText(airText, sx, base, cardDim);
     }
 
     private void refreshDrawerText() {
@@ -1784,6 +1843,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             sunsetText = Ui.trf("Sunset {time}", "time", Ui.time(wx.sunset));
         }
         long minute = System.currentTimeMillis() / 60_000;
+        if (minute != precipMinute || settings || wx != precipWeather) {
+            precipMinute = minute;
+            precipWeather = wx;
+            precipText = HomeData.precipitation(wx, System.currentTimeMillis());
+            airText = HomeData.air(wx.aqi);
+        }
         if (data.pricesAt != textPricesAt || minute != textMinute || settings) {
             textPricesAt = data.pricesAt;
             textMinute = minute;
@@ -2199,7 +2264,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                         okDown = true;
                         okHeld = false;
                         handler.removeCallbacks(holdStart);
-                        holdArmed = sheetOpen ? canToggleShelf(gridIndex) : canReorder();
+                        holdArmed = sheetOpen ? canToggleShelf(gridIndex) : canReorder() || heldPick() != null;
                         if (holdArmed) handler.postDelayed(holdStart, HOLD_MS);
                     } else if (okDown && holdArmed && e.isLongPress()) {
                         hold();
@@ -2424,15 +2489,79 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             retarget(false);
             return;
         }
+        if (it.kind == HomeApps.CLEAN) {
+            cleanMemory();
+            return;
+        }
         boolean opened = HomeApps.open(activity, it, this, Math.round(r.left), Math.round(r.top),
                 Math.round(r.width()), Math.round(r.height()));
         if (!opened) showToast(Ui.trf("Couldn't open {app}.", "app", it.label));
     }
 
+    private boolean cleaning;
+
+    /** Free Up Memory: `am kill-all` through the TV's ADB stops the apps in the background (never the one in front,
+     *  nor services Android keeps), then a toast says how much came free. */
+    private void cleanMemory() {
+        if (cleaning) return;
+        cleaning = true;
+        showToast(Ui.tr("Freeing up memory…"));
+        final Context c = getContext().getApplicationContext();
+        LOADER.execute(() -> {
+            String text;
+            long before = memAvailable();
+            try (Adb adb = Adb.connect(c, 10_000, null)) {
+                adb.shell("am kill-all");
+                SystemClock.sleep(1500);
+                long after = memAvailable(), freed = Math.max(0, after - before);
+                text = Ui.trf("Freed {freed}. Free now: {free}", "freed", android.text.format.Formatter.formatShortFileSize(c, freed),
+                        "free", android.text.format.Formatter.formatShortFileSize(c, after));
+            } catch (Exception e) {
+                AppLog.w("free up memory: " + e.getMessage());
+                text = Ui.tr("Couldn't free up memory.");
+            }
+            final String t = text;
+            handler.post(() -> {
+                cleaning = false;
+                showToast(t);
+            });
+        });
+    }
+
+    /** MemAvailable from /proc/meminfo, in bytes. */
+    private static long memAvailable() {
+        try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader("/proc/meminfo"))) {
+            for (String line = r.readLine(); line != null; line = r.readLine()) {
+                if (line.startsWith("MemAvailable:")) return Long.parseLong(line.replaceAll("\\D+", "")) * 1024;
+            }
+        } catch (Exception ignored) {
+        }
+        return 0;
+    }
+
     // MARK: - Holding OK: All Apps puts the app on the shelf or takes it off; on the shelf, the app is lifted to move
 
     private void hold() {
-        if (sheetOpen) toggleShelf(); else startReorder();
+        if (sheetOpen) toggleShelf();
+        else if (canReorder()) startReorder();
+        else pickMenu();
+    }
+
+    /** The pick under focus that has a menu (PickMenu: follow, search in other apps); null elsewhere. */
+    private Recs.Pick heldPick() {
+        if (sheetOpen) return null;
+        Recs.Pick p = zone == Z_HERO ? currentPick() : zone == Z_CARDS && cardIndex < cards.size() ? cards.get(cardIndex) : null;
+        return p == null || p.photo != null || p.title == null || !PickMenu.hasItems(getContext(), p) ? null : p;
+    }
+
+    private void pickMenu() {
+        handler.removeCallbacks(holdStart);
+        holdArmed = false;
+        Recs.Pick p = heldPick();
+        if (p == null) return;
+        okHeld = true;
+        click.open();
+        PickMenu.show(activity, p, this::showToast);
     }
 
     /** TalkBack's long click on an app in All Apps (once per press, if the remote's hold also arrives). */
@@ -3162,11 +3291,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 c.drawText(label, x, r.bottom + (40 + 4 * f) * k, lTip);
             }
         }
-        if (sleepText.isEmpty()) return;
         float right = (lightButtons.isEmpty() ? CONTENT_R * k : topRects[3].left) - 28 * k, cy = L_BUTTON_CY * k;
-        float tw = lQuote.measureText(sleepText), size = lQuote.getTextSize();
-        c.drawText(sleepText, right - tw, cy + Ui.halfCap(lQuote), lQuote);
-        Symbols.draw(getContext(), c, "bedtime", right - tw - size * 0.9f, cy, size, lQuote.getColor());
+        float size = lQuote.getTextSize();
+        if (!sleepText.isEmpty()) {
+            float tw = lQuote.measureText(sleepText);
+            c.drawText(sleepText, right - tw, cy + Ui.halfCap(lQuote), lQuote);
+            Symbols.draw(getContext(), c, "bedtime", right - tw - size * 0.9f, cy, size, lQuote.getColor());
+            right -= tw + size * 1.4f + 28 * k;
+        }
+        if (netSymbol != null) Symbols.draw(getContext(), c, netSymbol, right - size * 0.6f, cy, size * 1.15f, lQuote.getColor());
     }
 
     private boolean moveLight(int dx, int dy) {

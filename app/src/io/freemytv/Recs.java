@@ -460,7 +460,7 @@ final class Recs {
     }
 
     /** Language of titles and genres (TMDB's "fr-FR", "zh-CN"…); the services come from the region. */
-    private static String lang() {
+    static String lang() {
         String lang = Ui.language;
         if (lang.equals("en")) return "en-US";
         if (lang.equals("pt")) return "pt-BR";
@@ -698,6 +698,11 @@ final class Recs {
         } finally {
             c.disconnect();
         }
+    }
+
+    /** A TMDB call with the key, for Episodes (the followed shows). */
+    JSONObject tmdb(String path) throws IOException, org.json.JSONException {
+        return get(path);
     }
 
     private JSONObject get(String path) throws IOException, org.json.JSONException {

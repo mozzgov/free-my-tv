@@ -177,6 +177,23 @@ final class Prefs {
         version++;
     }
 
+    /** Phone remote (PhoneRemote): off by default, since it listens on the home network. */
+    static boolean phoneRemote() { return sp().getBoolean("phoneRemote", false); }
+    static void setPhoneRemote(boolean on) {   // committed: the :remote process reads it when it starts
+        sp().edit().putBoolean("phoneRemote", on).commit();
+        version++;
+    }
+
+    /** Its six-digit PIN, made once. */
+    static synchronized String remotePin() {
+        String pin = sp().getString("remotePin", "");
+        if (pin.length() != 6) {
+            pin = String.format(java.util.Locale.ROOT, "%06d", new java.security.SecureRandom().nextInt(1_000_000));
+            sp().edit().putString("remotePin", pin).commit();
+        }
+        return pin;
+    }
+
     static boolean quotes() { return sp().getBoolean("quotes", Config.SHOW_CRYPTO); }
     static void setQuotes(boolean on) { put("quotes", on); }
 

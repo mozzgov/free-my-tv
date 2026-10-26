@@ -208,6 +208,12 @@
             android:process=":sleep"
             android:exported="false" />
 
+        <!-- Phone remote (Home Settings, off by default): a PIN-locked page on port 8642. -->
+        <service
+            android:name=".PhoneRemote"
+            android:process=":remote"
+            android:exported="false" />
+
         <!-- Lets the home screen and the screensaver read what apps are playing (their media sessions); it unbinds itself
              at once, so no process stays up for it. -->
         <service

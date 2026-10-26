@@ -54,7 +54,13 @@ final class HomeData {
     // Both forecasts in one answer, the next 48 hours and today plus 5 days: Home Settings → Forecast switches without
     // asking again, and offline too.
     private static final String WEATHER_QUERY = "&current=temperature_2m,weather_code,is_day&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,weather_code"
-            + "&hourly=temperature_2m,weather_code,is_day&timezone=auto&forecast_days=6&forecast_hours=48";
+            + "&hourly=temperature_2m,weather_code,is_day&timezone=auto&forecast_days=6&forecast_hours=48"
+            + "&minutely_15=precipitation&forecast_minutely_15=12";
+
+    private static String airUrl() {
+        return "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=" + Prefs.latitude() + "&longitude=" + Prefs.longitude()
+                + "&current=european_aqi";
+    }
 
     private static String weatherPlace() {
         return Prefs.latitude() + "," + Prefs.longitude();
@@ -199,6 +205,41 @@ final class HomeData {
         final List<Double> dayMax = new ArrayList<>();
         final List<Double> dayMin = new ArrayList<>();
         final List<Integer> dayCode = new ArrayList<>();
+        // The next 3 hours in 15-minute slots (start of each, epoch ms) and their precipitation (mm).
+        final List<Long> slots = new ArrayList<>();
+        final List<Double> slotRain = new ArrayList<>();
+        /** European AQI (Open-Meteo's air quality), or -1. */
+        int aqi = -1;
+    }
+
+    /** "Precipitation in 40 min" or "Precipitation ends in 20 min" within the next 2 hours; else empty. */
+    static String precipitation(Weather w, long now) {
+        int first = -1;
+        for (int i = 0; i < w.slots.size(); i++) {
+            if (w.slots.get(i) + 15 * 60_000L > now) { first = i; break; }
+        }
+        if (first < 0) return "";
+        boolean wet = w.slotRain.get(first) >= 0.1;
+        for (int i = first + 1; i < w.slots.size(); i++) {
+            if (w.slotRain.get(i) >= 0.1 == wet) continue;
+            long minutes = Math.max(5, Math.round((w.slots.get(i) - now) / 60_000.0 / 5) * 5);
+            if (minutes > 120) return "";
+            return wet ? Ui.trf("Precipitation ends in {n} min", "n", minutes) : Ui.trf("Precipitation in {n} min", "n", minutes);
+        }
+        return "";
+    }
+
+    /** "Air 32 · Fair" (European AQI bands), or empty. */
+    static String air(int aqi) {
+        if (aqi < 0) return "";
+        String level = aqi <= 20 ? Ui.tr("air|Good") : aqi <= 40 ? Ui.tr("air|Fair") : aqi <= 60 ? Ui.tr("air|Moderate")
+                : aqi <= 80 ? Ui.tr("air|Poor") : Ui.tr("air|Very poor");
+        return Ui.trf("Air {n} · {level}", "n", aqi, "level", level);
+    }
+
+    private static int parseAir(String body) throws Exception {
+        JSONObject current = new JSONObject(body).optJSONObject("current");
+        return current == null || current.isNull("european_aqi") ? -1 : (int) Math.round(current.getDouble("european_aqi"));
     }
 
     private static HomeData instance;
@@ -239,6 +280,8 @@ final class HomeData {
             // The cached forecast is for the city it was fetched for; another city means fetch again.
             if (w != null && weatherPlace().equals(cache.getString("weatherPlace", ""))) {
                 weather = parseWeather(w);
+                String air = cache.getString("air", null);
+                if (air != null) weather.aqi = parseAir(air);
                 // Fetched with another query (an older version): shown, and fetched again now.
                 weatherAt = WEATHER_QUERY.equals(cache.getString("weatherQuery", "")) ? cache.getLong("weatherAt", 0) : 0;
                 weatherFor = weatherPlace();
@@ -308,11 +351,22 @@ final class HomeData {
                 try {
                     String place = weatherPlace();
                     String body = get(weatherUrl());
-                    weather = parseWeather(body);
+                    Weather w = parseWeather(body);
+                    String air = null;
+                    try {
+                        air = get(airUrl());
+                        w.aqi = parseAir(air);
+                    } catch (Exception e) {
+                        if (place.equals(weatherFor)) w.aqi = weather.aqi;   // the last one, for the same city
+                        AppLog.w("air quality: " + e.getMessage());
+                    }
+                    weather = w;
                     weatherAt = System.currentTimeMillis();
                     weatherFor = place;
-                    cache.edit().putString("weather", body).putLong("weatherAt", weatherAt).putString("weatherPlace", place)
-                            .putString("weatherQuery", WEATHER_QUERY).apply();
+                    SharedPreferences.Editor edit = cache.edit().putString("weather", body).putLong("weatherAt", weatherAt)
+                            .putString("weatherPlace", place).putString("weatherQuery", WEATHER_QUERY);
+                    if (air != null) edit.putString("air", air);
+                    edit.apply();
                     notifyListeners();
                 } catch (Exception e) {
                     weatherFailedAt = System.currentTimeMillis();
@@ -407,6 +461,14 @@ final class HomeData {
             w.dayMax.add(highs.optDouble(i));
             w.dayMin.add(lows.optDouble(i));
             w.dayCode.add(codes.optInt(i, -1));
+        }
+        JSONObject quarter = o.optJSONObject("minutely_15");
+        if (quarter != null) {
+            JSONArray slots = quarter.getJSONArray("time"), rain = quarter.getJSONArray("precipitation");
+            for (int i = 0; i < slots.length(); i++) {
+                w.slots.add(localTime(slots.getString(i), zone));
+                w.slotRain.add(rain.optDouble(i, 0));
+            }
         }
         return w;
     }
