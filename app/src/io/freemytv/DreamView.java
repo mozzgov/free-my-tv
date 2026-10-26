@@ -594,17 +594,17 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             float total = spacing * (n - 1);
             for (int i = 0; i < n; i++) {
                 values[i] = HomeData.compact(data.prices[coins[i]]);
-                glyphs[i] = Glyphs.width(getContext(), HomeData.COINS[coins[i]], cap);
+                glyphs[i] = Glyphs.width(getContext(), HomeData.symbol(coins[i]), cap);
                 total += glyphs[i] + gap + cornerQuote.measureText(values[i]);
             }
             float qx = right - total;
             for (int i = 0; i < n; i++) {
-                Glyphs.coin(getContext(), c, HomeData.COINS[coins[i]], qx + glyphs[i] / 2, base - cap / 2, cap, 0xA6FFFFFF);
+                Glyphs.coin(getContext(), c, HomeData.symbol(coins[i]), qx + glyphs[i] / 2, base - cap / 2, cap, 0xA6FFFFFF);
                 qx += glyphs[i] + gap;
                 c.drawText(values[i], qx, base, cornerQuote);
                 qx += cornerQuote.measureText(values[i]) + spacing;
             }
-            String stale = HomeData.staleness(data.pricesAt, 5 * 60_000L);
+            String stale = HomeData.staleness(data.pricesAt, HomeData.pricesEvery());
             if (!stale.isEmpty() && n > 0) c.drawText(stale, right - total - 24 * k - cornerStale.measureText(stale), base, cornerStale);
         } finally {
             chrome.endRecording();
@@ -867,17 +867,17 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         }
         for (int i = 0; i < values.length; i++) {
             values[i] = HomeData.price(data.prices[coins[i]]);
-            total += Glyphs.width(getContext(), HomeData.COINS[coins[i]], cap) + gap + quotePaint.measureText(values[i]);
+            total += Glyphs.width(getContext(), HomeData.symbol(coins[i]), cap) + gap + quotePaint.measureText(values[i]);
         }
         float x = cx - total / 2, base = h - 92 * k;
         for (int i = 0; i < values.length; i++) {
-            float gw = Glyphs.width(getContext(), HomeData.COINS[coins[i]], cap);
-            Glyphs.coin(getContext(), c, HomeData.COINS[coins[i]], x + gw / 2, base - cap / 2, cap, 0x80FFFFFF);
+            float gw = Glyphs.width(getContext(), HomeData.symbol(coins[i]), cap);
+            Glyphs.coin(getContext(), c, HomeData.symbol(coins[i]), x + gw / 2, base - cap / 2, cap, 0x80FFFFFF);
             x += gw + gap;
             c.drawText(values[i], x, base, quotePaint);
             x += quotePaint.measureText(values[i]) + spacing;
         }
-        String stale = HomeData.staleness(data.pricesAt, 5 * 60_000L);
+        String stale = HomeData.staleness(data.pricesAt, HomeData.pricesEvery());
         if (!stale.isEmpty() && values.length > 0) {
             if (!stale.equals(staleFor) || Ui.generation != staleGeneration) {
                 staleLine = Ui.trf("prices from {ago}", "ago", stale);

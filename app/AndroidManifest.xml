@@ -6,6 +6,8 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Allowed through ADB (appops) only while Home Settings' "Recent apps first" is on. -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
     <!-- After the TV boots (and after a TV update), checks that Free My TV mode is still as you left it. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- The sleep timer's minutes left over any app (SleepOverlay), when picked; allowed through ADB, as Android TV

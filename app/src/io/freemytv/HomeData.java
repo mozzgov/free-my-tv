@@ -37,6 +37,13 @@ final class HomeData {
     static final String[] COINS = {"BTC", "ETH", "SOL", "USDT"};
     static final String[] COIN_NAMES = {"Bitcoin", "Ethereum", "Solana", "Dollar"};
     private static final String CURRENCY = Place.currency();
+    /**
+     * In Belarusian rubles the card shows the National Bank's official rates (api.nbrb.by, no key) in place of crypto:
+     * Binance has no BYN pairs. Same slots as COINS; the scale (100 RUB, 10 CNY) comes with the rates.
+     */
+    static final boolean NBRB = CURRENCY.equals("BYN");
+    static final String[] FIAT = {"USD", "EUR", "RUB", "CNY"};
+    private static final int[] scales = {1, 1, 100, 10};
     /** Binance has no pairs in some currencies (INR...) and then refuses the whole request: prices go in dollars instead. */
     private static volatile boolean inDollars;
 
@@ -57,6 +64,8 @@ final class HomeData {
         return "https://api.open-meteo.com/v1/forecast?latitude=" + Prefs.latitude() + "&longitude=" + Prefs.longitude() + WEATHER_QUERY;
     }
     private static final long PRICES_EVERY = 5 * 60_000L, WEATHER_EVERY = 30 * 60_000L;
+    /** The National Bank sets its rates once a day. */
+    static final long RATES_EVERY = 60 * 60_000L;
     interface Listener { void onData(); }
 
     /** BTC, ETH and SOL; in Brazilian reais also the dollar (USDT/BRL), which Binance doesn't list for most currencies. */
@@ -76,7 +85,7 @@ final class HomeData {
         int n = 0;
         int[] tmp = new int[COINS.length];
         // The dollar only in reais, not in dollars: USDTUSDT isn't a pair, and Binance would refuse the whole request.
-        for (int i = 0; i < COINS.length; i++) if (Prefs.coin(i) && (i < 3 || CURRENCY.equals("BRL") && !dollars)) tmp[n++] = i;
+        for (int i = 0; i < COINS.length; i++) if (Prefs.coin(i) && (NBRB || i < 3 || CURRENCY.equals("BRL") && !dollars)) tmp[n++] = i;
         a = java.util.Arrays.copyOf(tmp, n);
         activeCoins = a;
         activeVersion = Prefs.version;
@@ -93,7 +102,60 @@ final class HomeData {
     }
 
     static String coinName(int i) {
+        if (NBRB) return scales[i] == 1 ? FIAT[i] : scales[i] + " " + FIAT[i];
         return i == 3 ? Ui.tr("Dollar") : COIN_NAMES[i];
+    }
+
+    /** What Glyphs draws for slot i: the coin's logo, or the currency's sign. */
+    static String symbol(int i) {
+        return NBRB ? FIAT[i] : COINS[i];
+    }
+
+    /** How often the prices are fetched: older than twice that, the card says how old they are. */
+    static long pricesEvery() {
+        return NBRB ? RATES_EVERY : PRICES_EVERY;
+    }
+
+    /** The card's title. */
+    static String cardTitle() {
+        return NBRB ? Ui.tr("Exchange rates") : Ui.tr("Crypto");
+    }
+
+    /** Today's official rates and the previous day's, for the change: {"today": [...], "prev": [...]}. */
+    private static String getRates() throws Exception {
+        String today = get("https://api.nbrb.by/exrates/rates?periodicity=0");
+        JSONArray list = new JSONArray(today);
+        if (list.length() == 0) throw new IOException("NBRB returned no rates");
+        SimpleDateFormat day = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+        day.setTimeZone(TimeZone.getTimeZone("UTC"));
+        long date = day.parse(list.getJSONObject(0).getString("Date").substring(0, 10)).getTime();
+        String prev = get("https://api.nbrb.by/exrates/rates?periodicity=0&ondate=" + day.format(date - 24 * 3600_000L));
+        return "{\"today\":" + today + ",\"prev\":" + prev + "}";
+    }
+
+    private void parseRates(String body) throws Exception {
+        JSONObject o = new JSONObject(body);
+        JSONArray today = o.getJSONArray("today"), prev = o.getJSONArray("prev");
+        int found = 0;
+        for (int k = 0; k < FIAT.length; k++) {
+            JSONObject now = rate(today, FIAT[k]), before = rate(prev, FIAT[k]);
+            if (now == null) continue;
+            found++;
+            double v = now.getDouble("Cur_OfficialRate");
+            scales[k] = now.optInt("Cur_Scale", scales[k]);
+            prices[k] = v;
+            double was = before == null ? Double.NaN : before.getDouble("Cur_OfficialRate") * scales[k] / before.optInt("Cur_Scale", scales[k]);
+            changes[k] = was > 0 ? (v - was) / was * 100 : Double.NaN;
+        }
+        if (found == 0) pricesAt = 0;
+    }
+
+    private static JSONObject rate(JSONArray list, String code) throws Exception {
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject r = list.getJSONObject(i);
+            if (code.equals(r.optString("Cur_Abbreviation"))) return r;
+        }
+        return null;
     }
 
     /** Binance.com refuses the US (HTTP 451); Binance.US answers the same call in dollars. */
@@ -166,9 +228,12 @@ final class HomeData {
         inDollars = CURRENCY.equals(cache.getString("dollarsFor", ""));
         try {
             if (Prefs.quotes()) {
-                String p = cache.getString("prices", null);
-                if (p != null) parsePrices(p);
-                pricesAt = cache.getLong("pricesAt", 0);
+                String p = cache.getString(NBRB ? "rates" : "prices", null);
+                if (p != null) {
+                    if (NBRB) parseRates(p);
+                    else parsePrices(p);
+                }
+                pricesAt = cache.getLong(NBRB ? "ratesAt" : "pricesAt", 0);
             }
             String w = cache.getString("weather", null);
             // The cached forecast is for the city it was fetched for; another city means fetch again.
@@ -188,9 +253,25 @@ final class HomeData {
     void refreshIfStale() {
         long now = System.currentTimeMillis();
         // A negative age (the TV's clock went back) counts as stale: otherwise the data would freeze.
-        if (!fetchingPrices && coinCount() > 0 && (now - pricesAt > PRICES_EVERY || now < pricesAt) && !failedRecently(pricesFailedAt, now)) {
+        long every = NBRB ? RATES_EVERY : PRICES_EVERY;
+        if (!fetchingPrices && coinCount() > 0 && (now - pricesAt > every || now < pricesAt) && !failedRecently(pricesFailedAt, now)) {
             fetchingPrices = true;
             io.execute(() -> {
+                if (NBRB) {
+                    try {
+                        String body = getRates();
+                        parseRates(body);
+                        pricesAt = System.currentTimeMillis();
+                        cache.edit().putString("rates", body).putLong("ratesAt", pricesAt).apply();
+                        notifyListeners();
+                    } catch (Exception e) {
+                        pricesFailedAt = System.currentTimeMillis();
+                        AppLog.w("rates: " + e.getMessage());
+                    } finally {
+                        fetchingPrices = false;
+                    }
+                    return;
+                }
                 try {
                     String body;
                     try {
@@ -465,6 +546,7 @@ final class HomeData {
             case "EUR": return "€";
             case "GBP": return "£";
             case "JPY": return "¥";
+            case "BYN": return "Br ";
             default: return CURRENCY + " ";
         }
     }

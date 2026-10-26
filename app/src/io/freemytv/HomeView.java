@@ -1271,7 +1271,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             for (int i = 0; i < n; i++) {
                 prices[i] = all[coins[i]];
                 values[i] = HomeData.compact(prices[i]);
-                glyphs[i] = Glyphs.width(getContext(), HomeData.COINS[coins[i]], cap);
+                glyphs[i] = Glyphs.width(getContext(), HomeData.symbol(coins[i]), cap);
                 widths[i] = text.measureText(values[i]);
             }
         }
@@ -1365,13 +1365,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float x = clock ? MARGIN * k : right - total;
         int coinColor = clock ? text.getColor() : Ui.alpha(tone(0xB38E8E93, 0x8CFFFFFF), fade);
         for (int i = 0; i < n; i++) {
-            Glyphs.coin(getContext(), c, HomeData.COINS[coins[i]], x + q.glyphs[i] / 2, base - cap / 2, cap, coinColor);
+            Glyphs.coin(getContext(), c, HomeData.symbol(coins[i]), x + q.glyphs[i] / 2, base - cap / 2, cap, coinColor);
             x += q.glyphs[i] + gap;
             c.drawText(q.values[i], x, base, text);
             x += q.widths[i] + spacing;
         }
         text.setColor(textColor);
-        String stale = HomeData.staleness(data.pricesAt, 5 * 60_000L);
+        String stale = HomeData.staleness(data.pricesAt, HomeData.pricesEvery());
         if (stale.isEmpty()) return;
         if (clock) c.drawText(stale, x - spacing + 24 * k + staleQuote.measureText(stale), base, staleQuote);
         else c.drawText(stale, right - total - 24 * k, base, staleQuote);
@@ -1787,7 +1787,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (data.pricesAt != textPricesAt || minute != textMinute || settings) {
             textPricesAt = data.pricesAt;
             textMinute = minute;
-            String stale = HomeData.staleness(data.pricesAt, 5 * 60_000L);
+            String stale = HomeData.staleness(data.pricesAt, HomeData.pricesEvery());
             staleText = stale.isEmpty() ? Ui.tr("24h change") : Ui.trf("quotes|{ago}", "ago", stale);
             for (int i = 0; i < HomeData.COINS.length; i++) {
                 priceText[i] = HomeData.brl(data.prices[i]);
@@ -1850,15 +1850,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void drawPrices(Canvas c, RectF r) {
         float x = r.left + 34 * k, right = r.right - 34 * k;
         refreshDrawerText();
-        c.drawText(Ui.tr("Crypto"), x, r.top + 54 * k, cardTitle);
+        c.drawText(HomeData.cardTitle(), x, r.top + 54 * k, cardTitle);
         c.drawText(staleText, right, r.top + 54 * k, cardDimRight);
         float cap = Ui.cap(cardText);
         int[] coins = HomeData.active();
         for (int j = 0; j < coins.length; j++) {
             int i = coins[j];
             float base = r.top + (110 + 52 * j) * k, mid = base - cap / 2;
-            float gw = Glyphs.width(getContext(), HomeData.COINS[i], cap);
-            Glyphs.coin(getContext(), c, HomeData.COINS[i], x + 14 * k, mid, cap, tone(L_DIM, 0xCCFFFFFF));
+            float gw = Glyphs.width(getContext(), HomeData.symbol(i), cap);
+            Glyphs.coin(getContext(), c, HomeData.symbol(i), x + 14 * k, mid, cap, tone(L_DIM, 0xCCFFFFFF));
             c.drawText(HomeData.coinName(i), x + Math.max(gw, 28 * k) / 2 + 30 * k, base, cardText);
             c.drawText(priceText[i], right - 128 * k, base, pricePaint);
             double change = data.changes[i];
@@ -2123,7 +2123,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // The shelf and All Apps (100 to 500 ms of package queries on a TV) only when they can have changed.
         long up = SystemClock.uptimeMillis();
         final boolean apps = appsStale || Prefs.version != appsVersion || Ui.generation != appsGeneration
-                || up - appsAt > APPS_MAX_AGE_MS;
+                || up - appsAt > APPS_MAX_AGE_MS || Prefs.recentFirst();   // the order changes with each app opened
         if (apps) {
             appsStale = false;
             appsVersion = Prefs.version;
@@ -2885,8 +2885,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** The quotes card as TalkBack reads it: each coin with its price and 24 h change. */
     private String quotesText() {
-        StringBuilder s = new StringBuilder(Ui.tr("Crypto"));
-        String stale = HomeData.staleness(data.pricesAt, 5 * 60_000L);
+        StringBuilder s = new StringBuilder(HomeData.cardTitle());
+        String stale = HomeData.staleness(data.pricesAt, HomeData.pricesEvery());
         s.append(", ").append(stale.isEmpty() ? Ui.tr("24h change") : Ui.trf("quotes|{ago}", "ago", stale)).append('.');
         for (int i : HomeData.active()) {
             s.append(' ').append(HomeData.coinName(i)).append(' ').append(HomeData.brl(data.prices[i]));

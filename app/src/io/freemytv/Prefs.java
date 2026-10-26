@@ -170,6 +170,13 @@ final class Prefs {
         version++;
     }
 
+    /** The shelf in the order the apps were last opened (usage stats, allowed through ADB while it's on). */
+    static boolean recentFirst() { return sp().getBoolean("recentFirst", false); }
+    static void setRecentFirst(boolean on) {   // committed: the main process reads it right away to allow usage stats
+        sp().edit().putBoolean("recentFirst", on).commit();
+        version++;
+    }
+
     static boolean quotes() { return sp().getBoolean("quotes", Config.SHOW_CRYPTO); }
     static void setQuotes(boolean on) { put("quotes", on); }
 

@@ -706,9 +706,9 @@ public class SettingsActivity extends Activity {
 
         private static final String[] UNITS = {"auto", "C", "F"}, THEMES = {"auto", "light", "dark"};
         /** Home Settings: language, temperature, theme, my photos, sounds, watch from the screensaver, weather, city, forecast,
-         *  now playing, quotes, then one row per coin. */
+         *  now playing, recent apps first, quotes, then one row per coin. */
         private static final int PHOTOS_ROW = 3, SAVER_ROW = 5, WEATHER_ROW = 6, CITY_ROW = 7, FORECAST_ROW = 8, PLAYING_ROW = 9,
-                QUOTES_ROW = 10, COIN_ROWS = 11;
+                RECENT_ROW = 10, QUOTES_ROW = 11, COIN_ROWS = 12;
         /** Home Settings rows on screen at once (what fits above the hints at 1080p); a longer list scrolls. */
         private static final int SETTINGS_VISIBLE = 10;
 
@@ -728,7 +728,12 @@ public class SettingsActivity extends Activity {
             l.add(Ui.tr("City"));
             l.add(Ui.tr("Forecast"));
             l.add(Ui.tr("Now Playing widget"));
+            l.add(Ui.tr("Recent apps first"));
             l.add(Ui.tr("Quotes widget"));
+            if (HomeData.NBRB) {
+                for (int i = 0; i < HomeData.FIAT.length; i++) l.add(HomeData.coinName(i));
+                return l.toArray(new String[0]);
+            }
             l.add("Bitcoin");
             l.add("Ethereum");
             l.add("Solana");
@@ -754,6 +759,7 @@ public class SettingsActivity extends Activity {
             v[CITY_ROW] = !cityStatus.isEmpty() ? cityStatus : Prefs.city().isEmpty() ? "—" : Prefs.city();
             v[FORECAST_ROW] = Prefs.forecast().equals("days") ? Ui.tr("Next days") : Ui.tr("Next hours");
             v[PLAYING_ROW] = onOff(Prefs.nowPlaying());
+            v[RECENT_ROW] = onOff(Prefs.recentFirst());
             v[QUOTES_ROW] = onOff(Prefs.quotes());
             // No quotes widget, nowhere to show prices: the coins read as off (and stay locked) until it is back on.
             for (int i = COIN_ROWS; i < v.length; i++) v[i] = onOff(Prefs.quotes() && Prefs.coin(i - COIN_ROWS));
@@ -1031,6 +1037,10 @@ public class SettingsActivity extends Activity {
                 case PLAYING_ROW:   // the listener follows the widget: allowed while it's on, taken back when it goes off
                     Prefs.setNowPlaying(!Prefs.nowPlaying());
                     HomeMode.nowPlayingAccess(getContext());
+                    break;
+                case RECENT_ROW:   // usage stats follow the row, like Now Playing's listener
+                    Prefs.setRecentFirst(!Prefs.recentFirst());
+                    HomeMode.usageAccess(getContext());
                     break;
                 case QUOTES_ROW: Prefs.setQuotes(!Prefs.quotes()); break;
                 default:

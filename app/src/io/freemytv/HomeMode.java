@@ -340,6 +340,32 @@ final class HomeMode {
         Capabilities.prove(c, Capabilities.LISTENER, works);
     }
 
+    /**
+     * Home Settings' "Recent apps first" orders the shelf by when each app was last opened, which only usage stats tell:
+     * allowed while it's on, in Free My TV mode, and taken back when it goes off and by Original.
+     */
+    static void usageAccess(Context c) {
+        ModeJob.schedule(c, ModeJob.USAGE, null, 0);
+    }
+
+    static void usageAccessNow(Context app) {
+        synchronized (RUN) {
+            JSONObject s = state(app);
+            Prefs.reload();
+            boolean on = Prefs.recentFirst() && FREE.equals(s.optString("mode"));
+            try (Adb adb = Adb.connect(app, 10_000, null)) {
+                usageStats(adb, on);
+            } catch (IOException e) {
+                AppLog.w("usage stats: " + e.getMessage());
+            }
+        }
+    }
+
+    private static void usageStats(Adb adb, boolean on) throws IOException {
+        String out = adb.shell("appops set " + PKG + " GET_USAGE_STATS " + (on ? "allow" : "default")).trim();
+        AppLog.w("usage stats " + (on ? "on" : "off") + (out.isEmpty() ? "" : ": " + out));
+    }
+
     // MARK: - Switches (main process, from ModeJob)
 
     static void applyNow(Context c, String mode) {
@@ -527,6 +553,7 @@ final class HomeMode {
             Capabilities.forget(c, Capabilities.OVERLAY);                       // asked again next time
             try {
                 nowPlaying(c, adb, false);
+                usageStats(adb, false);
             } catch (IOException e) {
                 AppLog.w("now playing: " + e.getMessage());
             }

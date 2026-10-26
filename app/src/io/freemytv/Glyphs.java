@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.util.SparseArray;
 
@@ -44,13 +45,24 @@ final class Glyphs {
         int slot = slot(coin), key = slot << 16 | frame;
         synchronized (BITMAPS) {
             if (BITMAPS.indexOfKey(key) >= 0) return BITMAPS.get(key);
-            Drawable d = context.getDrawable(IDS[slot]);
             Bitmap b = null;
-            if (d != null) {
+            if (slot >= IDS.length) {
                 Bitmap full = Bitmap.createBitmap(frame, frame, Bitmap.Config.ARGB_8888);
-                d.setBounds(0, 0, frame, frame);
-                d.draw(new Canvas(full));
+                Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+                p.setTypeface(Typeface.DEFAULT_BOLD);
+                p.setTextAlign(Paint.Align.CENTER);
+                p.setTextSize(frame * 0.8f);
+                Paint.FontMetrics m = p.getFontMetrics();
+                new Canvas(full).drawText(SIGNS[slot - IDS.length], frame / 2f, frame / 2f - (m.ascent + m.descent) / 2, p);
                 b = trimSides(full).extractAlpha();
+            } else {
+                Drawable d = context.getDrawable(IDS[slot]);
+                if (d != null) {
+                    Bitmap full = Bitmap.createBitmap(frame, frame, Bitmap.Config.ARGB_8888);
+                    d.setBounds(0, 0, frame, frame);
+                    d.draw(new Canvas(full));
+                    b = trimSides(full).extractAlpha();
+                }
             }
             BITMAPS.put(key, b);
             return b;
@@ -77,11 +89,18 @@ final class Glyphs {
 
     private static final int[] IDS = {R.drawable.coin_btc, R.drawable.coin_eth, R.drawable.coin_sol, R.drawable.coin_usdt};
 
+    /** The National Bank's currencies (HomeData.FIAT) have no logo here: their sign, drawn as text. */
+    private static final String[] SIGNS = {"$", "€", "₽", "¥"};
+
     private static int slot(String coin) {
         switch (coin) {
             case "BTC": return 0;
             case "ETH": return 1;
             case "SOL": return 2;
+            case "USD": return 4;
+            case "EUR": return 5;
+            case "RUB": return 6;
+            case "CNY": return 7;
             default: return 3;
         }
     }

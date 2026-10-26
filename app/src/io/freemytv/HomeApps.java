@@ -167,7 +167,9 @@ final class HomeApps {
         List<Item> items = new ArrayList<>();
         PackageManager pm = c.getPackageManager();
         int max = maxShelf(c);
-        for (String pkg : shelfPackages(c)) {
+        List<String> pkgs = shelfPackages(c);
+        if (Prefs.recentFirst()) pkgs = byLastUse(c, pkgs);
+        for (String pkg : pkgs) {
             if (items.size() >= max) break;
             Intent launch = launchIntent(pm, pkg);
             if (launch == null) continue;
@@ -193,6 +195,30 @@ final class HomeApps {
             items.add(it);
         }
         return items;
+    }
+
+    /**
+     * The same apps, the last opened first (the last 30 days of usage stats); the others keep their order after them.
+     * Without the permission the system answers nothing, and the order stays.
+     */
+    private static List<String> byLastUse(Context c, List<String> pkgs) {
+        android.app.usage.UsageStatsManager usm = c.getSystemService(android.app.usage.UsageStatsManager.class);
+        if (usm == null) return pkgs;
+        long now = System.currentTimeMillis();
+        final Map<String, Long> last = new HashMap<>();
+        try {
+            for (Map.Entry<String, android.app.usage.UsageStats> e
+                    : usm.queryAndAggregateUsageStats(now - 30 * 24 * 3600_000L, now).entrySet()) {
+                long at = e.getValue().getLastTimeUsed();
+                if (at > 0) last.put(e.getKey(), at);
+            }
+        } catch (RuntimeException e) {
+            return pkgs;
+        }
+        if (last.isEmpty()) return pkgs;
+        List<String> out = new ArrayList<>(pkgs);
+        java.util.Collections.sort(out, (a, b) -> Long.compare(last.getOrDefault(b, 0L), last.getOrDefault(a, 0L)));
+        return out;
     }
 
     private static String[] known(String pkg) {

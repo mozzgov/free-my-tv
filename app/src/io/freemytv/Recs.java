@@ -705,18 +705,13 @@ final class Recs {
         if (key == null) throw new IOException("no TMDB key");
         boolean bearer = key.startsWith("eyJ");   // read access token (v4) or API key (v3)
         String url = API + path + (bearer ? "" : (path.contains("?") ? "&" : "?") + "api_key=" + URLEncoder.encode(key, "UTF-8"));
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-        c.setConnectTimeout(8000);
-        c.setReadTimeout(8000);
-        c.setRequestProperty("Accept", "application/json");
-        if (bearer) c.setRequestProperty("Authorization", "Bearer " + key);
-        try {
-            int code = c.getResponseCode();
-            if (code == 401) throw new IOException("TMDB rejected the key");
-            if (code != 200) throw new IOException("TMDB returned HTTP " + code);
-            return new JSONObject(read(c.getInputStream()));
-        } finally {
-            c.disconnect();
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Accept", "application/json");
+        if (bearer) headers.put("Authorization", "Bearer " + key);
+        try (Http.Response r = Http.get(url, headers, 8000)) {
+            if (r.code == 401) throw new IOException("TMDB rejected the key");
+            if (r.code != 200) throw new IOException("TMDB returned HTTP " + r.code);
+            return new JSONObject(read(r.body));
         }
     }
 
@@ -733,19 +728,15 @@ final class Recs {
         //noinspection ResultOfMethodCallIgnored
         f.getParentFile().mkdirs();
         File part = new File(f.getPath() + ".part");
-        HttpURLConnection c = (HttpURLConnection) new URL(IMAGES + p.backdrop).openConnection();
-        c.setConnectTimeout(8000);
-        c.setReadTimeout(20000);
-        try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
+        try (Http.Response r = Http.get(IMAGES + p.backdrop, null, 20000); FileOutputStream out = new FileOutputStream(part)) {
+            if (r.code != 200) throw new IOException("TMDB image returned HTTP " + r.code);
             byte[] buffer = new byte[16384];
             int n;
-            while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
+            while ((n = r.body.read(buffer)) > 0) out.write(buffer, 0, n);
         } catch (IOException e) {
             //noinspection ResultOfMethodCallIgnored
             part.delete();
             throw e;
-        } finally {
-            c.disconnect();
         }
         if (!part.renameTo(f)) throw new IOException("couldn't save the image");
         prune(f.getParentFile());
