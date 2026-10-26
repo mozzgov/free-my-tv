@@ -60,7 +60,7 @@ final class Recs {
     private static final int ANIMATION = 16;
     private static final long LIST_EVERY = 6 * 3600_000L;
     /** Bump when what is saved for each title changes (the saved list is discarded and fetched again). */
-    private static final int CACHE_VERSION = 4;
+    private static final int CACHE_VERSION = 5;
     private static final int MANHA = 0, TARDE = 1, NOITE = 2;
     /** Service name on TMDB (part of the name, lowercase) → TV app (HomeApps key, package). */
     private static final String[][] SERVICES = {
@@ -446,6 +446,17 @@ final class Recs {
                 + common).getJSONArray("results");
         List<Pick> newMovies = new ArrayList<>(), newShows = new ArrayList<>();
         for (int i = 0; i < movies.length(); i++) add(newMovies, movies.getJSONObject(i), "movie");
+        // Few new movies on the TV's services (Kinopoisk in Russia lists none from the past year on TMDB): the past
+        // five years, then the best-liked of any year.
+        if (newMovies.size() < 10) {
+            JSONArray older = get("/discover/movie?vote_count.gte=100&primary_release_date.gte=" + day(-5 * 365)
+                    + "&primary_release_date.lte=" + day(0) + common).getJSONArray("results");
+            for (int i = 0; i < older.length(); i++) add(newMovies, older.getJSONObject(i), "movie");
+        }
+        if (newMovies.size() < 10) {
+            JSONArray best = get("/discover/movie?vote_count.gte=500" + common).getJSONArray("results");
+            for (int i = 0; i < best.length(); i++) add(newMovies, best.getJSONObject(i), "movie");
+        }
         for (int i = 0; i < shows.length(); i++) add(newShows, shows.getJSONObject(i), "tv");
         // Trending first, then the new releases; movies and shows alternating, without repeats, up to 24.
         List<Pick> list = new ArrayList<>();

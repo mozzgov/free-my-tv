@@ -245,11 +245,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private String clockText = "", dateText = "", weatherLine = "";
     /** "Off in 42 min" next to the round buttons while the sleep timer runs (Settings > Sleep Timer); "" otherwise. */
     private String sleepText = "";
-    /** The network's symbol beside the top buttons: Ethernet, Wi-Fi bars, no internet, or none at all. */
-    private String netSymbol;
+    /** The network beside the top buttons: Wi-Fi with 1 to 3 arcs lit, Ethernet, no internet (!), or none (struck out). */
+    private static final int NET_HIDDEN = 0, NET_WIFI = 1, NET_ETHERNET = 2, NET_NO_INTERNET = 3, NET_OFF = 4;
+    private int netState = NET_HIDDEN, netBars;
+    private final Paint netPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final RectF netArc = new RectF();
     private final ConnectivityManager.NetworkCallback netCallback = new ConnectivityManager.NetworkCallback() {
-        @Override public void onCapabilitiesChanged(Network n, NetworkCapabilities caps) { setNet(netSymbol(caps)); }
-        @Override public void onLost(Network n) { setNet("wifi_off"); }
+        @Override public void onCapabilitiesChanged(Network n, NetworkCapabilities caps) { setNet(netState(caps), netBars(caps)); }
+        @Override public void onLost(Network n) { setNet(NET_OFF, 0); }
     };
     private long weatherLineAt = -1;
     private int weatherLinePrefs = -1;
@@ -824,20 +827,58 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         statusDirty = true;
     }
 
-    private static String netSymbol(NetworkCapabilities caps) {
-        if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) return "wifi_bad";
-        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) return "ethernet";
-        if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return null;
-        int rssi = Build.VERSION.SDK_INT >= 29 ? caps.getSignalStrength() : Integer.MIN_VALUE;
-        if (rssi == Integer.MIN_VALUE) return "wifi_4";   // unknown (Android 8 and 9)
-        return rssi >= -55 ? "wifi_4" : rssi >= -66 ? "wifi_3" : rssi >= -77 ? "wifi_2" : "wifi_1";
+    private static int netState(NetworkCapabilities caps) {
+        if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) return NET_NO_INTERNET;
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) return NET_ETHERNET;
+        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ? NET_WIFI : NET_HIDDEN;
     }
 
-    private void setNet(String symbol) {
-        if (TextUtils.equals(symbol, netSymbol)) return;
-        netSymbol = symbol;
+    private static int netBars(NetworkCapabilities caps) {
+        int rssi = Build.VERSION.SDK_INT >= 29 ? caps.getSignalStrength() : Integer.MIN_VALUE;
+        if (rssi == Integer.MIN_VALUE) return 3;   // unknown (Android 8 and 9)
+        return rssi >= -60 ? 3 : rssi >= -72 ? 2 : 1;
+    }
+
+    private void setNet(int state, int bars) {
+        if (state == netState && bars == netBars) return;
+        netState = state;
+        netBars = bars;
         statusDirty = true;
         status.invalidate();
+    }
+
+    /** Wi-Fi drawn by hand (a dot and three arcs, the lit ones in ink): the font's bars read as a blot this small. */
+    private void drawNet(Canvas c, float cx, float cy, float s, int ink) {
+        if (netState == NET_ETHERNET) {
+            Symbols.draw(getContext(), c, "ethernet", cx, cy, s * 0.9f, ink);
+            return;
+        }
+        int dim = Ui.alpha(ink, 0.28f);
+        boolean on = netState == NET_WIFI;
+        float ox = cx - (on ? 0 : s * 0.18f), oy = cy + s * 0.4f;
+        netPaint.setStyle(Paint.Style.STROKE);
+        netPaint.setStrokeCap(Paint.Cap.ROUND);
+        netPaint.setStrokeWidth(s * 0.12f);
+        for (int i = 1; i <= 3; i++) {
+            float r = s * 0.26f * i + s * 0.02f;
+            netArc.set(ox - r, oy - r, ox + r, oy + r);
+            netPaint.setColor(on && i <= netBars ? ink : dim);
+            c.drawArc(netArc, 225, 90, false, netPaint);
+        }
+        netPaint.setStyle(Paint.Style.FILL);
+        netPaint.setColor(on ? ink : dim);
+        c.drawCircle(ox, oy - s * 0.04f, s * 0.09f, netPaint);
+        netPaint.setColor(ink);
+        if (netState == NET_NO_INTERNET) {   // "!" to the right
+            float x = ox + s * 0.62f;
+            netPaint.setStyle(Paint.Style.STROKE);
+            c.drawLine(x, oy - s * 0.72f, x, oy - s * 0.3f, netPaint);
+            netPaint.setStyle(Paint.Style.FILL);
+            c.drawCircle(x, oy - s * 0.06f, s * 0.07f, netPaint);
+        } else if (netState == NET_OFF) {    // struck out
+            netPaint.setStyle(Paint.Style.STROKE);
+            c.drawLine(ox - s * 0.5f, oy - s * 0.85f, ox + s * 0.5f, oy + s * 0.05f, netPaint);
+        }
     }
 
     private void watchNetwork(boolean on) {
@@ -845,7 +886,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (cm == null) return;
         try {
             if (on) {
-                if (cm.getActiveNetwork() == null) setNet("wifi_off");
+                if (cm.getActiveNetwork() == null) setNet(NET_OFF, 0);
                 cm.registerDefaultNetworkCallback(netCallback, handler);
             } else {
                 cm.unregisterNetworkCallback(netCallback);
@@ -3299,7 +3340,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             Symbols.draw(getContext(), c, "bedtime", right - tw - size * 0.9f, cy, size, lQuote.getColor());
             right -= tw + size * 1.4f + 28 * k;
         }
-        if (netSymbol != null) Symbols.draw(getContext(), c, netSymbol, right - size * 0.6f, cy, size * 1.15f, lQuote.getColor());
+        if (netState != NET_HIDDEN) drawNet(c, right - 20 * k, cy, 34 * k, tone(L_INK, 0xEBFFFFFF));
     }
 
     private boolean moveLight(int dx, int dy) {
