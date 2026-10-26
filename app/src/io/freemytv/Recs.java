@@ -48,6 +48,7 @@ final class Recs {
         String title, backdrop, meta = "", app, pkg;
         String link;            // opens the title in its app (looked up with Watchmode), or null: the app's home
         boolean detailed;
+        boolean external;       // backdrop is a whole address (an app's Watch Next image), not a TMDB path
         java.io.File photo;     // one of your own photos (Photos): no title, no caption
     }
 
@@ -260,7 +261,8 @@ final class Recs {
     }
 
     private File imageFile(Pick p) {
-        return new File(new File(context.getCacheDir(), "recs"), p.backdrop.replace("/", ""));
+        String name = p.external ? "x" + Integer.toHexString(p.backdrop.hashCode()) + ".img" : p.backdrop.replace("/", "");
+        return new File(new File(context.getCacheDir(), "recs"), name);
     }
 
     /** With a key: fetches the list if stale or the time of day (morning/afternoon/night) changed; then the details. */
@@ -744,7 +746,22 @@ final class Recs {
         //noinspection ResultOfMethodCallIgnored
         f.getParentFile().mkdirs();
         File part = new File(f.getPath() + ".part");
-        try (Http.Response r = Http.get(IMAGES + p.backdrop, null, 20000); FileOutputStream out = new FileOutputStream(part)) {
+        if (p.external && !p.backdrop.startsWith("http")) {   // content:// or android.resource:// from the app
+            try (java.io.InputStream in = context.getContentResolver().openInputStream(android.net.Uri.parse(p.backdrop));
+                 FileOutputStream out = new FileOutputStream(part)) {
+                if (in == null) throw new IOException("no image at " + p.backdrop);
+                byte[] buffer = new byte[16384];
+                for (int n = in.read(buffer); n > 0; n = in.read(buffer)) out.write(buffer, 0, n);
+            } catch (IOException | RuntimeException e) {
+                //noinspection ResultOfMethodCallIgnored
+                part.delete();
+                throw new IOException(e.getMessage());
+            }
+            if (!part.renameTo(f)) throw new IOException("couldn't save the image");
+            prune(f.getParentFile());
+            return;
+        }
+        try (Http.Response r = Http.get(p.external ? p.backdrop : IMAGES + p.backdrop, null, 20000); FileOutputStream out = new FileOutputStream(part)) {
             if (r.code != 200) throw new IOException("TMDB image returned HTTP " + r.code);
             byte[] buffer = new byte[16384];
             int n;

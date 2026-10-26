@@ -29,6 +29,8 @@
   .power { background: #4a2125; }
   #status { min-height: 20px; font-size: 14px; color: #ff8787; margin: 8px 0; }
   #login { display: none; }
+  #share { white-space: pre-wrap; word-break: break-all; font-size: 12px; opacity: .55; margin-top: 22px;
+           user-select: text; -webkit-user-select: text; }
   #login p { opacity: .7; }
 </style>
 </head>
@@ -57,8 +59,9 @@
       <button data-key="90">⏩</button>
     </div>
     <div class="field"><input id="text" autocomplete="off"><button id="textGo"></button></div>
-    <div class="field"><input id="url" type="url" autocomplete="off" placeholder="https://"><button id="urlGo"></button></div>
+    <div class="field"><input id="url" inputmode="url" autocomplete="off" placeholder="https://"><button id="urlGo"></button></div>
     <div class="apps" id="apps"></div>
+    <pre id="share"></pre>
   </div>
   <div id="status"></div>
 </main>
@@ -67,11 +70,13 @@
   var T = ru ? {
     pin: "Введите PIN из «Настройки Home» → «Пульт с телефона» на телевизоре.",
     sleep: "Выкл.", send: "Ввести", open: "Открыть", text: "Текст в поле на ТВ",
-    wrong: "Неверный PIN", locked: "Слишком много попыток, подождите 5 минут", offline: "Телевизор не отвечает"
+    wrong: "Неверный PIN", locked: "Слишком много попыток, подождите 5 минут", offline: "Телевизор не отвечает",
+    share: "Ссылка для ярлыка «Поделиться» (iPhone: Команды; Android: HTTP Shortcuts), ссылка в конце:"
   } : {
     pin: "Enter the PIN from Home Settings → Phone remote on the TV.",
     sleep: "Off", send: "Type", open: "Open", text: "Text for the TV's field",
-    wrong: "Wrong PIN", locked: "Too many tries, wait 5 minutes", offline: "The TV doesn't answer"
+    wrong: "Wrong PIN", locked: "Too many tries, wait 5 minutes", offline: "The TV doesn't answer",
+    share: "For a Share shortcut (iPhone: Shortcuts; Android: HTTP Shortcuts), the link at the end:"
   };
   var $ = function (id) { return document.getElementById(id); };
   $("pinHint").textContent = T.pin;
@@ -103,6 +108,7 @@
   function hello() {
     call("hello", "", function (r) {
       localStorage.setItem("fmtvPin", pin);
+      shareHint();
       $("login").style.display = "none";
       $("remote").style.display = "block";
       var box = $("apps");
@@ -142,9 +148,13 @@
   };
   $("urlGo").onclick = function () {
     var v = $("url").value.trim();
-    if (v && !/^https?:\/\//i.test(v)) v = "https://" + v;
-    if (v) call("url", v);
+    if (v && !/https?:\/\//i.test(v)) v = "https://" + v;
+    if (v) call("url", v, function () { $("url").value = ""; });
   };
+
+  function shareHint() {
+    $("share").textContent = T.share + "\n" + location.origin + "/share?pin=" + pin + "&u=";
+  }
 
   if (pin) hello(); else showLogin();
 </script>

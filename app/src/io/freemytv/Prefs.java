@@ -184,6 +184,14 @@ final class Prefs {
         version++;
     }
 
+    /** Alarm (Alarm): minute of the day, -1 off; and the app it opens, empty for the home screen. */
+    static int alarmMinute() { return sp().getInt("alarmMinute", -1); }
+    static String alarmApp() { return sp().getString("alarmApp", ""); }
+    static void setAlarm(int minute, String app) {   // committed: the main process reads it when the alarm goes off
+        sp().edit().putInt("alarmMinute", minute).putString("alarmApp", app).commit();
+        version++;
+    }
+
     /** Its six-digit PIN, made once. */
     static synchronized String remotePin() {
         String pin = sp().getString("remotePin", "");

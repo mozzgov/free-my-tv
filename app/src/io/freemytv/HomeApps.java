@@ -570,7 +570,19 @@ final class HomeApps {
                 intent = launchIntent(a.getPackageManager(), it.pkg);
                 plain = intent;
                 if (plain != null) plain.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
-                if (intent != null && it.uri != null) {
+                if (intent != null && it.uri != null && it.uri.startsWith("intent:")) {   // a Watch Next row's own
+                    try {
+                        Intent row = Intent.parseUri(it.uri, Intent.URI_INTENT_SCHEME);
+                        // Only into the app that wrote the row: started from here, it could reach our own screens.
+                        if (row.getComponent() == null) row.setPackage(it.pkg);
+                        if (row.getComponent() == null || it.pkg.equals(row.getComponent().getPackageName())) {
+                            row.setSelector(null);
+                            intent = row;
+                        }
+                    } catch (java.net.URISyntaxException e) {
+                        AppLog.w("watch next intent: " + e.getMessage());
+                    }
+                } else if (intent != null && it.uri != null) {
                     intent = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(it.uri)).addCategory(Intent.CATEGORY_BROWSABLE).setPackage(it.pkg);
                 }
                 break;

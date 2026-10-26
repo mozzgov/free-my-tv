@@ -28,7 +28,7 @@ import java.util.regex.Pattern;
  * user can press any key, so no other app on the TV may drive it.
  *
  * Lines: "auth TOKEN" (answer "ok VERSION"), "key CODE", "long CODE", "paste BASE64", "start PKG/CLASS",
- * "view URL", "quit".
+ * "view [PACKAGE] URL", "quit".
  */
 public final class Injector {
     static final int PORT = 8643;
@@ -75,9 +75,14 @@ public final class Injector {
                         case "start":
                             if (COMPONENT.matcher(arg).matches()) exec("am", "start", "-n", arg);
                             break;
-                        case "view":
-                            if (URL.matcher(arg).matches()) exec("am", "start", "-a", "android.intent.action.VIEW", "-d", arg);
+                        case "view": {   // "URL", or "PACKAGE URL" for one app
+                            int cut = arg.indexOf(' ');
+                            String pkg = cut < 0 ? null : arg.substring(0, cut), url = cut < 0 ? arg : arg.substring(cut + 1);
+                            if (!URL.matcher(url).matches()) break;
+                            if (pkg == null) exec("am", "start", "-a", "android.intent.action.VIEW", "-d", url);
+                            else if (pkg.matches("[A-Za-z0-9_.]+")) exec("am", "start", "-a", "android.intent.action.VIEW", "-d", url, "-p", pkg);
                             break;
+                        }
                         case "quit": System.exit(0); break;
                         default: break;
                     }

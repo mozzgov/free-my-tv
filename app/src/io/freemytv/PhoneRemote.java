@@ -161,6 +161,17 @@ public class PhoneRemote extends Service {
                 send(out, 200, "text/html; charset=utf-8", page());
                 return;
             }
+            if (parts[0].equals("GET") && path.startsWith("/share?")) {   // a phone's share sheet (Shortcuts, HTTP Shortcuts)
+                String query = path.substring(7), sharedPin = param(query, "pin"), shared = param(query, "u");
+                int code = checkPin(sharedPin);
+                String text = code == 200 ? (openLink(shared) ? "✓ " + Ui.tr("Sent to the TV") : Ui.tr("No link in what was shared"))
+                        : code == 429 ? Ui.tr("Too many tries, wait 5 minutes") : Ui.tr("Wrong PIN");
+                send(out, code == 200 ? 200 : code, "text/html; charset=utf-8", ("<!DOCTYPE html><meta charset=utf-8>"
+                        + "<meta name=viewport content='width=device-width'><body style='font:20px sans-serif;background:#101114;"
+                        + "color:#eee;display:flex;align-items:center;justify-content:center;height:90vh'>"
+                        + android.text.Html.escapeHtml(text)).getBytes(StandardCharsets.UTF_8));
+                return;
+            }
             if (!path.startsWith("/api/")) {
                 send(out, 404, "text/plain", "Not found".getBytes(StandardCharsets.UTF_8));
                 return;
@@ -208,9 +219,7 @@ public class PhoneRemote extends Service {
                 inject("paste " + Base64.encodeToString(body.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP));
                 return "{\"ok\":true}";
             case "url":
-                if (!body.matches("https?://\\S{1,2000}")) return null;
-                inject("view " + body);
-                return "{\"ok\":true}";
+                return openLink(body) ? "{\"ok\":true}" : null;
             case "open": {
                 String component = component(body);
                 if (component == null) return null;
@@ -220,6 +229,58 @@ public class PhoneRemote extends Service {
             default:
                 return null;
         }
+    }
+
+    private static final java.util.regex.Pattern LINK = java.util.regex.Pattern.compile("https?://[^\\s\"'<>`\\\\]{1,2000}");
+    /** Hosts → the TV app that plays them; any other link goes to whatever the TV opens links with. */
+    private static final String[][] LINK_APPS = {
+        {"youtube.com", "com.google.android.youtube.tv"}, {"youtu.be", "com.google.android.youtube.tv"},
+        {"kinopoisk.ru", "ru.kinopoisk.tv"}, {"hd.kinopoisk.ru", "ru.kinopoisk.tv"},
+        {"rezka.ag", "com.falcofemoralis.hdrezkaapp"}, {"hdrezka.ag", "com.falcofemoralis.hdrezkaapp"},
+        {"hdrzk.org", "com.falcofemoralis.hdrezkaapp"}, {"filmix.my", "net.filmix.filmix"},
+    };
+
+    /** The first link in what was shared ("Watch this https://youtu.be/…"), opened in its app on the TV. */
+    private boolean openLink(String shared) throws IOException {
+        java.util.regex.Matcher m = LINK.matcher(shared == null ? "" : shared);
+        if (!m.find()) return false;
+        String url = m.group(), host = android.net.Uri.parse(url).getHost();
+        String app = null;
+        for (String[] a : LINK_APPS) {
+            if (host != null && (host.equals(a[0]) || host.endsWith("." + a[0])) && HomeApps.launchIntent(getPackageManager(), a[1]) != null) {
+                app = a[1];
+                break;
+            }
+        }
+        if (app != null && app.equals("com.google.android.youtube.tv")) url = youtube(url);
+        inject("view " + (app == null ? "" : app + " ") + url);
+        return true;
+    }
+
+    /** YouTube for TV opens watch?v= links; youtu.be and /shorts/ are turned into those. */
+    private static String youtube(String url) {
+        android.net.Uri u = android.net.Uri.parse(url);
+        String host = u.getHost(), id = null;
+        java.util.List<String> path = u.getPathSegments();
+        if (host != null && host.endsWith("youtu.be") && !path.isEmpty()) id = path.get(0);
+        else if (path.size() >= 2 && (path.get(0).equals("shorts") || path.get(0).equals("live"))) id = path.get(1);
+        if (id == null || !id.matches("[\\w-]{6,20}")) return url;
+        String t = u.getQueryParameter("t");
+        return "https://www.youtube.com/watch?v=" + id + (t != null && t.matches("\\d+s?") ? "&t=" + t : "");
+    }
+
+    private static String param(String query, String name) {
+        for (String kv : query.split("&")) {
+            int eq = kv.indexOf('=');
+            if (eq > 0 && kv.substring(0, eq).equals(name)) {
+                try {
+                    return java.net.URLDecoder.decode(kv.substring(eq + 1), "UTF-8");
+                } catch (Exception e) {
+                    return "";
+                }
+            }
+        }
+        return "";
     }
 
     /** The shelf's apps, for the page's buttons. */

@@ -706,9 +706,9 @@ public class SettingsActivity extends Activity {
 
         private static final String[] UNITS = {"auto", "C", "F"}, THEMES = {"auto", "light", "dark"};
         /** Home Settings: language, temperature, theme, my photos, sounds, watch from the screensaver, weather, city, forecast,
-         *  now playing, recent apps first, phone remote, quotes, then one row per coin. */
+         *  now playing, recent apps first, phone remote, alarm, quotes, then one row per coin. */
         private static final int PHOTOS_ROW = 3, SAVER_ROW = 5, WEATHER_ROW = 6, CITY_ROW = 7, FORECAST_ROW = 8, PLAYING_ROW = 9,
-                RECENT_ROW = 10, PHONE_ROW = 11, QUOTES_ROW = 12, COIN_ROWS = 13;
+                RECENT_ROW = 10, PHONE_ROW = 11, ALARM_ROW = 12, QUOTES_ROW = 13, COIN_ROWS = 14;
         /** Home Settings rows on screen at once (what fits above the hints at 1080p); a longer list scrolls. */
         private static final int SETTINGS_VISIBLE = 10;
 
@@ -730,6 +730,7 @@ public class SettingsActivity extends Activity {
             l.add(Ui.tr("Now Playing widget"));
             l.add(Ui.tr("Recent apps first"));
             l.add(Ui.tr("Phone remote"));
+            l.add(Ui.tr("Alarm"));
             l.add(Ui.tr("Quotes widget"));
             if (HomeData.NBRB) {
                 for (int i = 0; i < HomeData.FIAT.length; i++) l.add(HomeData.coinName(i));
@@ -764,6 +765,7 @@ public class SettingsActivity extends Activity {
             String address = Prefs.phoneRemote() ? PhoneRemote.address() : "";
             v[PHONE_ROW] = address.isEmpty() ? onOff(Prefs.phoneRemote())
                     : Ui.trf("{address} · PIN {pin}", "address", address, "pin", Prefs.remotePin());
+            v[ALARM_ROW] = alarmValue();
             v[QUOTES_ROW] = onOff(Prefs.quotes());
             // No quotes widget, nowhere to show prices: the coins read as off (and stay locked) until it is back on.
             for (int i = COIN_ROWS; i < v.length; i++) v[i] = onOff(Prefs.quotes() && Prefs.coin(i - COIN_ROWS));
@@ -1051,6 +1053,9 @@ public class SettingsActivity extends Activity {
                     Prefs.setPhoneRemote(!Prefs.phoneRemote());
                     PhoneRemote.sync(getContext());
                     break;
+                case ALARM_ROW:
+                    askAlarm();
+                    return;
                 case QUOTES_ROW: Prefs.setQuotes(!Prefs.quotes()); break;
                 default:
                     if (!Prefs.quotes()) return;
@@ -1083,6 +1088,83 @@ public class SettingsActivity extends Activity {
         // MARK: - My Photos (sent from a computer: tools/photos.py)
 
         /** OK on My Photos: asks, then deletes them all. */
+        /** "07:30 · YouTube", or Off. */
+        private String alarmValue() {
+            int m = Prefs.alarmMinute();
+            if (m < 0) return onOff(false);
+            String app = Prefs.alarmApp();
+            String what = app.isEmpty() ? Ui.tr("Home Screen") : label(app);
+            return String.format(java.util.Locale.ROOT, "%02d:%02d", m / 60, m % 60) + " · " + what;
+        }
+
+        private String label(String pkg) {
+            android.content.pm.PackageManager pm = getContext().getPackageManager();
+            try {
+                return String.valueOf(pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)));
+            } catch (android.content.pm.PackageManager.NameNotFoundException e) {
+                return pkg;
+            }
+        }
+
+        /** The time (spinners: the remote's arrows), then what it opens; Off when one is set. */
+        private void askAlarm() {
+            int m = Prefs.alarmMinute();
+            if (m >= 0) {
+                new AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                        .setTitle(Ui.tr("Alarm"))
+                        .setItems(new String[] {Ui.tr("Change"), Ui.tr("Turn off")}, (d, which) -> {
+                            if (which == 0) askAlarmTime(m);
+                            else setAlarm(-1, "");
+                        })
+                        .show();
+            } else {
+                askAlarmTime(7 * 60);
+            }
+        }
+
+        private void askAlarmTime(int m) {
+            android.widget.TimePicker picker = new android.widget.TimePicker(
+                    new android.view.ContextThemeWrapper(activity, android.R.style.Theme_Holo_Dialog));   // spinners
+            picker.setIs24HourView(true);
+            picker.setHour(m / 60);
+            picker.setMinute(m % 60);
+            new AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle(Ui.tr("Alarm"))
+                    .setView(picker)
+                    .setPositiveButton(Ui.tr("Next"), (d, which) -> askAlarmApp(picker.getHour() * 60 + picker.getMinute()))
+                    .setNegativeButton(Ui.tr("Cancel"), null)
+                    .show();
+        }
+
+        private void askAlarmApp(int minute) {
+            List<String> pkgs = new java.util.ArrayList<>();
+            List<String> labels = new java.util.ArrayList<>();
+            pkgs.add("");
+            labels.add(Ui.tr("Home Screen"));
+            android.content.pm.PackageManager pm = getContext().getPackageManager();
+            for (String pkg : HomeApps.shelfPackages(getContext())) {
+                if (HomeApps.launchIntent(pm, pkg) == null) continue;
+                pkgs.add(pkg);
+                labels.add(label(pkg));
+            }
+            new AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle(Ui.tr("Alarm opens"))
+                    .setItems(labels.toArray(new String[0]), (d, which) -> setAlarm(minute, pkgs.get(which)))
+                    .show();
+        }
+
+        private void setAlarm(int minute, String app) {
+            Prefs.setAlarm(minute, app);
+            Alarm.schedule(getContext());
+            if (minute >= 0) {
+                long in = Alarm.next(minute, System.currentTimeMillis()) - System.currentTimeMillis();
+                android.widget.Toast.makeText(getContext(), Ui.trf("The TV wakes up in {h} h {m} min", "h", in / 3_600_000,
+                        "m", in / 60_000 % 60), android.widget.Toast.LENGTH_LONG).show();
+            }
+            invalidate();
+            spoken.focusMoved();
+        }
+
         private void askRemovePhotos() {
             int n = Photos.files(getContext()).size();
             if (n == 0) return;

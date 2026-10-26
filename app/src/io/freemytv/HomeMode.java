@@ -361,6 +361,21 @@ final class HomeMode {
         }
     }
 
+    /**
+     * Continue Watching (WatchNext): TvProvider shows other apps' Watch Next rows only to READ_TV_LISTINGS, a runtime
+     * permission Android TV has no screen for. Read only, and never revoked: a revoke kills this app's processes,
+     * this job's too.
+     */
+    private static void tvListings(Context c, Adb adb) {
+        if (WatchNext.allowed(c)) return;
+        try {
+            String out = adb.shell("pm grant " + PKG + " android.permission.READ_TV_LISTINGS").trim();
+            AppLog.w("tv listings" + (out.isEmpty() ? " allowed" : ": " + out));
+        } catch (IOException e) {
+            AppLog.w("tv listings: " + e.getMessage());
+        }
+    }
+
     private static void usageStats(Adb adb, boolean on) throws IOException {
         String out = adb.shell("appops set " + PKG + " GET_USAGE_STATS " + (on ? "allow" : "default")).trim();
         AppLog.w("usage stats " + (on ? "on" : "off") + (out.isEmpty() ? "" : ": " + out));
@@ -401,6 +416,7 @@ final class HomeMode {
             latest.put("originalHome", home).put("originalDream", dream);
             String saver = adb.shell("settings get secure screensaver_components").trim();
             if (!saver.contains(PKG + "/")) latest.put("originalScreensaver", safeComponents(saver));
+            tvListings(c, adb);
             boolean jm = hasJm(adb);
             String jmBefore = jm ? jmHome(adb) : "";
             if (jm && !jmBefore.equals(PKG)) latest.put("originalJmHome", jmBefore.matches("[\\w.]*") ? jmBefore : "");
@@ -697,6 +713,7 @@ final class HomeMode {
                 } catch (IOException e) {
                     AppLog.w("now playing: " + e.getMessage());
                 }
+                tvListings(app, adb);
                 Set<String> present = packages(adb, "");
                 Set<String> disabledNow = packages(adb, "-d");
                 Set<String> owners = wifiOwners(adb);

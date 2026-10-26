@@ -11,10 +11,21 @@ public class HomeReceiver extends BroadcastReceiver {
         if (Intent.ACTION_BOOT_COMPLETED.equals(action)) {
             HomeMode.bootCheck(context);
             PhoneRemote.sync(context);
+            Alarm.schedule(context);
         } else if (Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) {
             HomeMode.verify(context);   // app updated: complete Free My TV mode if something is missing
             HomeMode.ensureRemoteService(context, 3_000);
             PhoneRemote.sync(context);
+            Alarm.schedule(context);
+        } else if (Alarm.ACTION.equals(action)) {
+            PendingResult result = goAsync();   // ADB is network: off the main thread
+            new Thread(() -> {
+                try {
+                    Alarm.fire(context);
+                } finally {
+                    result.finish();
+                }
+            }).start();
         } else if (SleepTimer.ACTION.equals(action)) {
             long setAt = intent.getLongExtra("setAt", 0);
             PendingResult result = goAsync();   // ADB is network: off the main thread

@@ -27,6 +27,8 @@ import java.util.SimpleTimeZone;
 import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Optional crypto prices (Binance, every 5 min) and weather/sunrise/sunset (Open-Meteo, every 30 min), cached
@@ -210,6 +212,8 @@ final class HomeData {
         final List<Double> slotRain = new ArrayList<>();
         /** European AQI (Open-Meteo's air quality), or -1. */
         int aqi = -1;
+        int traffic = -1;          // Yandex's score, where it covers the city
+        String trafficIcon = "";
     }
 
     /** "Precipitation in 40 min" or "Precipitation ends in 20 min" within the next 2 hours; else empty. */
@@ -235,6 +239,51 @@ final class HomeData {
         String level = aqi <= 20 ? Ui.tr("air|Good") : aqi <= 40 ? Ui.tr("air|Fair") : aqi <= 60 ? Ui.tr("air|Moderate")
                 : aqi <= 80 ? Ui.tr("air|Poor") : Ui.tr("air|Very poor");
         return Ui.trf("Air {n} · {level}", "n", aqi, "level", level);
+    }
+
+    /**
+     * Yandex's traffic score (0 to 10) for the cities it covers, by its region number: Minsk 157, Moscow 213,
+     * Saint Petersburg 2. Not an official API (the old Yandex Bar feed): it can stop answering.
+     */
+    private static int trafficRegion() {
+        String city = Prefs.city().toLowerCase(Locale.ROOT);
+        if (city.contains("минск") || city.contains("minsk") || city.contains("мінск")) return 157;
+        if (city.contains("москва") || city.contains("moscow")) return 213;
+        if (city.contains("петербург") || city.contains("petersburg")) return 2;
+        return 0;
+    }
+
+    private static final Pattern TRAFFIC_LEVEL = Pattern.compile("<level>(\\d+)</level>"),
+            TRAFFIC_ICON = Pattern.compile("<icon>(\\w+)</icon>");
+
+    private static void fetchTraffic(Weather w) {
+        int region = trafficRegion();
+        if (region == 0) return;
+        try {
+            String xml = get("https://export.yandex.ru/bar/reginfo.xml?region=" + region);
+            Matcher level = TRAFFIC_LEVEL.matcher(xml), icon = TRAFFIC_ICON.matcher(xml);
+            if (!level.find()) return;
+            w.traffic = Integer.parseInt(level.group(1));
+            w.trafficIcon = icon.find() ? icon.group(1) : "";
+        } catch (Exception e) {
+            AppLog.w("traffic: " + e.getMessage());
+        }
+    }
+
+    /** "Traffic 4" for the weather card, or empty. */
+    static String traffic(Weather w) {
+        return w == null || w.traffic < 0 ? "" : Ui.trf("Traffic {n}", "n", w.traffic);
+    }
+
+    /** Yandex's colour for the score: green, yellow or red. */
+    static int trafficColor(Weather w) {
+        if (w == null) return 0;
+        switch (w.trafficIcon) {
+            case "green": return 0xFF34C759;
+            case "yellow": return 0xFFFFCC00;
+            case "red": return 0xFFFF3B30;
+            default: return w.traffic <= 3 ? 0xFF34C759 : w.traffic <= 6 ? 0xFFFFCC00 : 0xFFFF3B30;
+        }
     }
 
     private static int parseAir(String body) throws Exception {
@@ -360,6 +409,7 @@ final class HomeData {
                         if (place.equals(weatherFor)) w.aqi = weather.aqi;   // the last one, for the same city
                         AppLog.w("air quality: " + e.getMessage());
                     }
+                    fetchTraffic(w);
                     weather = w;
                     weatherAt = System.currentTimeMillis();
                     weatherFor = place;
